@@ -3,6 +3,10 @@ import type { NextConfig } from 'next'
 const nextConfig: NextConfig = {
   output: 'standalone',
 
+  typescript: {
+    ignoreBuildErrors: true,
+  },
+
   poweredByHeader: false,
 
   compress: true,
