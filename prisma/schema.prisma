@@ -1,0 +1,133 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  admin
+  manager
+  team_lead
+  team_member
+}
+
+model User {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name            String   @db.VarChar(100)
+  email           String   @unique @db.VarChar(100)
+  passwordHash    String   @map("password_hash")
+  role            Role
+  departmentId    String?  @map("department_id") @db.Uuid
+  createdById     String?  @map("created_by") @db.Uuid
+  assignedTeamIds String[] @default([]) @map("assigned_team_ids") @db.Text
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  department          Department?      @relation(fields: [departmentId], references: [id])
+  createdBy           User?            @relation("UserCreatedBy", fields: [createdById], references: [id])
+  createdUsers        User[]           @relation("UserCreatedBy")
+  kpiLogs             KpiLog[]
+  createdKpiCriteria  KpiCriteria[]    @relation("KpiCreatedBy")
+  assignedKpiCriteria KpiCriteria[]    @relation("KpiAssignedUser")
+  teamLeading         TeamAssignment[] @relation("TeamLeader")
+  teamMember          TeamAssignment[] @relation("TeamMember")
+  auditLogs           AuditLog[]
+  departments         Department[]     @relation("DepartmentCreator")
+  updatedSettings     AppSettings[]    @relation("AppSettingsUpdatedBy")
+
+  @@map("users")
+}
+
+model Department {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String   @db.VarChar(100)
+  colorHex    String   @default("#F97316") @map("color_hex") @db.VarChar(7)
+  createdById String?  @map("created_by") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  createdBy   User?         @relation("DepartmentCreator", fields: [createdById], references: [id])
+  users       User[]
+  kpiCriteria KpiCriteria[]
+
+  @@map("departments")
+}
+
+model KpiCriteria {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  departmentId   String   @map("department_id") @db.Uuid
+  taskName       String   @map("task_name") @db.VarChar(100)
+  dailyLimit     Int      @map("daily_limit")
+  isLocked       Boolean  @default(false) @map("is_locked")
+  createdById    String?  @map("created_by") @db.Uuid
+  assignedUserId String?  @map("assigned_user_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  department   Department @relation(fields: [departmentId], references: [id])
+  createdBy    User?      @relation("KpiCreatedBy", fields: [createdById], references: [id])
+  assignedUser User?      @relation("KpiAssignedUser", fields: [assignedUserId], references: [id])
+  kpiLogs      KpiLog[]
+
+  @@map("kpi_criteria")
+}
+
+model KpiLog {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  kpiCriteriaId  String?  @map("kpi_criteria_id") @db.Uuid
+  logDate        DateTime @map("log_date") @db.Date
+  countDone      Int      @default(0) @map("count_done")
+  notes          String?
+  isCustomTask   Boolean  @default(false) @map("is_custom_task")
+  customTaskName String?  @map("custom_task_name") @db.VarChar(100)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  user        User         @relation(fields: [userId], references: [id])
+  kpiCriteria KpiCriteria? @relation(fields: [kpiCriteriaId], references: [id])
+
+  @@unique([userId, kpiCriteriaId, logDate])
+  @@map("kpi_logs")
+}
+
+model TeamAssignment {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  leaderId   String   @map("leader_id") @db.Uuid
+  memberId   String   @map("member_id") @db.Uuid
+  assignedAt DateTime @default(now()) @map("assigned_at")
+
+  leader User @relation("TeamLeader", fields: [leaderId], references: [id])
+  member User @relation("TeamMember", fields: [memberId], references: [id])
+
+  @@map("team_assignments")
+}
+
+model AuditLog {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  action    String   @db.VarChar(100)
+  tableName String   @map("table_name") @db.VarChar(50)
+  recordId  String?  @map("record_id") @db.Uuid
+  oldValue  Json?    @map("old_value")
+  newValue  Json?    @map("new_value")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("audit_logs")
+}
+
+model AppSettings {
+  id           Int      @id @default(1)
+  companyName  String   @default("TekCroft KPI CRM") @map("company_name") @db.VarChar(150)
+  logoUrl      String?  @map("logo_url")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  updatedById  String?  @map("updated_by") @db.Uuid
+
+  updatedBy User? @relation("AppSettingsUpdatedBy", fields: [updatedById], references: [id])
+
+  @@map("app_settings")
+}
