@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import bcrypt from 'bcryptjs'
+// import bcrypt from 'bcryptjs'
 
 const ROLE_CAN_CREATE: Record<string, string[]> = {
     admin: ['manager', 'team_lead', 'team_member'],
@@ -33,7 +33,8 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: 'Email already exists' }, { status: 409 })
     }
 
-    const passwordHash = await bcrypt.hash(password, 12)
+    // const passwordHash = await bcrypt.hash(password, 12)
+    const passwordHash = password
 
     const cleanedAssignedTeams: string[] =
         Array.isArray(assignedTeamIds) && ['manager', 'team_lead'].includes(role)
