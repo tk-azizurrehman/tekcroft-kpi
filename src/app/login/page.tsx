@@ -501,7 +501,7 @@ export default function LoginPage() {
                             </div>
                             <div style={{ marginTop: 4 }}>
                                 Don&apos;t have an account? Contact your manager or admin at{' '}
-                                <span style={{ color: '#38BDF8', fontWeight: 600 }}>{`admin${ALLOWED_DOMAIN}`}</span>.
+                                <span style={{ color: '#38BDF8', fontWeight: 600 }}>{`aziz.ur.rahman${ALLOWED_DOMAIN}`}</span>.
                             </div>
                         </div>
                     </motion.div>
