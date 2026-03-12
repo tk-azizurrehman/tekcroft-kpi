@@ -4,7 +4,6 @@ import { useState } from 'react'
 import { signIn } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
-import Image from 'next/image'
 
 const ALLOWED_DOMAIN = process.env.NEXT_PUBLIC_ALLOWED_EMAIL_DOMAIN || '@tekcroft.com'
 
@@ -16,6 +15,7 @@ export default function LoginPage() {
     const [info, setInfo] = useState('')
     const [loading, setLoading] = useState(false)
     const [mode, setMode] = useState<'login' | 'forgot'>('login')
+    const [logoError, setLogoError] = useState(false)
 
     async function handleSubmit(e: React.FormEvent) {
         e.preventDefault()
@@ -146,18 +146,28 @@ export default function LoginPage() {
                                 }}
                                 transition={{ duration: 6, repeat: Infinity, repeatType: 'mirror' }}
                             >
-                                <Image
-                                    src="/tekcroft-logo.png"
-                                    alt="TekCroft logo"
-                                    width={180}
-                                    height={180}
-                                    priority={true}
-                                    unoptimized={true}
-                                    key={Date.now()}
-                                    style={{
-                                        objectFit: 'contain',
-                                    }}
-                                />
+                                {!logoError ? (
+                                    <img
+                                        src="/tekcroft-logo.png"
+                                        alt="TekCroft logo"
+                                        width={180}
+                                        height={180}
+                                        style={{ objectFit: 'contain' }}
+                                        onError={() => setLogoError(true)}
+                                    />
+                                ) : (
+                                    <div
+                                        style={{
+                                            fontSize: 28,
+                                            fontWeight: 700,
+                                            color: '#E5E7EB',
+                                            letterSpacing: 1,
+                                        }}
+                                    >
+                                        <span>Tek</span>
+                                        <span style={{ color: '#007BFF' }}>Croft</span>
+                                    </div>
+                                )}
                             </motion.div>
 
                             <motion.div
