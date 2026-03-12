@@ -1,17 +1,53 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Modal } from '@/components/ui/SharedComponents'
 
+type DepartmentOption = {
+    id: string
+    name: string
+    colorHex?: string
+}
+
+type AssignableUser = {
+    id: string
+    name: string
+    email: string
+    role: string
+    departmentId: string | null
+    department?: DepartmentOption | null
+}
+
+type KpiCriteriaItem = {
+    id: string
+    taskName: string
+    dailyLimit: number
+    isLocked: boolean
+    departmentId: string
+    assignedUserId: string | null
+    assignedUser?: AssignableUser | null
+}
+
+const ROLE_GROUPS = [
+    { role: 'manager', label: 'Managers' },
+    { role: 'team_lead', label: 'Team Leads' },
+    { role: 'team_member', label: 'Team Members' },
+]
+
+function formatRole(role: string) {
+    return role.replace('_', ' ')
+}
+
 export default function KpiCriteriaPage() {
-    const [criteria, setCriteria] = useState<any[]>([])
-    const [departments, setDepartments] = useState<any[]>([])
-    const [members, setMembers] = useState<any[]>([])
+    const [criteria, setCriteria] = useState<KpiCriteriaItem[]>([])
+    const [departments, setDepartments] = useState<DepartmentOption[]>([])
+    const [assignableUsers, setAssignableUsers] = useState<AssignableUser[]>([])
     const [loading, setLoading] = useState(true)
     const [showAdd, setShowAdd] = useState(false)
-    const [editItem, setEditItem] = useState<any>(null)
+    const [editItem, setEditItem] = useState<KpiCriteriaItem | null>(null)
     const [saving, setSaving] = useState(false)
     const [error, setError] = useState('')
+    const [memberSearch, setMemberSearch] = useState('')
 
     const [form, setForm] = useState({
         taskName: '',
@@ -21,31 +57,58 @@ export default function KpiCriteriaPage() {
         assignedUserId: '',
     })
 
-    useEffect(() => { fetchAll() }, [])
-
-    async function fetchAll() {
-        setLoading(true)
+    async function fetchAll(showLoader = true) {
+        if (showLoader) setLoading(true)
         const [cRes, dRes, uRes] = await Promise.all([
             fetch('/api/kpi/criteria'),
             fetch('/api/departments'),
-            fetch('/api/users/list'),
+            fetch('/api/users/list?scope=assignable'),
         ])
         const cJson = await cRes.json()
         const dJson = await dRes.json()
         const uJson = await uRes.json()
         setCriteria(cJson.criteria || [])
         setDepartments(dJson.departments || [])
-        setMembers((uJson.users || []).filter((u: any) => u.role === 'team_member'))
+        setAssignableUsers(uJson.users || [])
         setLoading(false)
     }
+
+    useEffect(() => {
+        let cancelled = false
+
+        async function loadInitialData() {
+            const [cRes, dRes, uRes] = await Promise.all([
+                fetch('/api/kpi/criteria'),
+                fetch('/api/departments'),
+                fetch('/api/users/list?scope=assignable'),
+            ])
+            const cJson = await cRes.json()
+            const dJson = await dRes.json()
+            const uJson = await uRes.json()
+
+            if (cancelled) return
+
+            setCriteria(cJson.criteria || [])
+            setDepartments(dJson.departments || [])
+            setAssignableUsers(uJson.users || [])
+            setLoading(false)
+        }
+
+        void loadInitialData()
+
+        return () => {
+            cancelled = true
+        }
+    }, [])
 
     function openAdd() {
         setForm({ taskName: '', dailyLimit: '', isLocked: false, deptId: '', assignedUserId: '' })
         setEditItem(null)
+        setMemberSearch('')
         setShowAdd(true)
     }
 
-    function openEdit(c: any) {
+    function openEdit(c: KpiCriteriaItem) {
         setForm({
             taskName: c.taskName,
             dailyLimit: String(c.dailyLimit),
@@ -54,8 +117,31 @@ export default function KpiCriteriaPage() {
             assignedUserId: c.assignedUserId || '',
         })
         setEditItem(c)
+        setMemberSearch('')
         setShowAdd(true)
     }
+
+    const selectedDepartmentId = editItem?.departmentId || form.deptId || ''
+    const filteredAssignableUsers = useMemo(() => {
+        const search = memberSearch.trim().toLowerCase()
+
+        return assignableUsers.filter((user) => {
+            if (selectedDepartmentId && user.departmentId !== selectedDepartmentId) return false
+            if (!search) return true
+
+            const haystack = [
+                user.name,
+                user.email,
+                user.role,
+                user.department?.name,
+            ]
+                .filter(Boolean)
+                .join(' ')
+                .toLowerCase()
+
+            return haystack.includes(search)
+        })
+    }, [assignableUsers, memberSearch, selectedDepartmentId])
 
     async function handleSave() {
         if (!form.taskName || !form.dailyLimit) { setError('Task name and daily limit are required'); return }
@@ -89,7 +175,7 @@ export default function KpiCriteriaPage() {
         fetchAll()
     }
 
-    async function toggleLock(c: any) {
+    async function toggleLock(c: KpiCriteriaItem) {
         await fetch('/api/kpi/criteria', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
@@ -125,10 +211,10 @@ export default function KpiCriteriaPage() {
                             </thead>
                             <tbody>
                                 {criteria.length === 0 ? (
-                                    <tr><td colSpan={4} style={{ textAlign: 'center', padding: '40px', color: '#9CA3AF' }}>
-                                        No KPI tasks defined yet. Click "Add Task Type" to get started.
+                                    <tr><td colSpan={5} style={{ textAlign: 'center', padding: '40px', color: '#9CA3AF' }}>
+                                        No KPI tasks defined yet. Click &quot;Add Task Type&quot; to get started.
                                     </td></tr>
-                                ) : criteria.map((c: any) => (
+                                ) : criteria.map((c) => (
                                     <tr key={c.id}>
                                         <td style={{ fontWeight: 600 }}>{c.taskName}</td>
                                         <td><span className="badge badge-blue">{c.dailyLimit} / day</span></td>
@@ -136,7 +222,9 @@ export default function KpiCriteriaPage() {
                                             {c.assignedUserId
                                                 ? (
                                                     <span className="badge badge-orange" style={{ fontSize: '11px' }}>
-                                                        {members.find((m: any) => m.id === c.assignedUserId)?.name || 'Specific member'}
+                                                        {c.assignedUser
+                                                            ? `${c.assignedUser.name} (${formatRole(c.assignedUser.role)})`
+                                                            : 'Specific assignee'}
                                                     </span>
                                                 )
                                                 : <span style={{ fontSize: '11px', color: '#6B7280' }}>All in department</span>}
@@ -195,29 +283,61 @@ export default function KpiCriteriaPage() {
                 {!editItem && departments.length > 0 && (
                     <div className="form-group">
                         <label className="form-label">Department (optional)</label>
-                        <select className="form-select" value={form.deptId} onChange={e => setForm(f => ({ ...f, deptId: e.target.value }))}>
+                        <select
+                            className="form-select"
+                            value={form.deptId}
+                            onChange={e => {
+                                const nextDeptId = e.target.value
+                                setForm(f => {
+                                    const selectedUser = assignableUsers.find(user => user.id === f.assignedUserId)
+                                    const shouldClearAssignee = selectedUser && nextDeptId && selectedUser.departmentId !== nextDeptId
+
+                                    return {
+                                        ...f,
+                                        deptId: nextDeptId,
+                                        assignedUserId: shouldClearAssignee ? '' : f.assignedUserId,
+                                    }
+                                })
+                            }}
+                        >
                             <option value="">Use your department</option>
-                            {departments.map((d: any) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                            {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
                         </select>
                     </div>
                 )}
-                {members.length > 0 && (
+                {assignableUsers.length > 0 && (
                     <div className="form-group">
-                        <label className="form-label">Assign to Specific Team Member (optional)</label>
+                        <label className="form-label">Assign to Specific User (optional)</label>
+                        <input
+                            className="form-input"
+                            placeholder="Search by name, email, role, or department"
+                            value={memberSearch}
+                            onChange={e => setMemberSearch(e.target.value)}
+                            style={{ marginBottom: '8px' }}
+                        />
                         <select
                             className="form-select"
                             value={form.assignedUserId}
                             onChange={e => setForm(f => ({ ...f, assignedUserId: e.target.value }))}
                         >
-                            <option value="">All members in department</option>
-                            {members.map((m: any) => (
-                                <option key={m.id} value={m.id}>
-                                    {m.name} ({m.email})
-                                </option>
-                            ))}
+                            <option value="">All users in department</option>
+                            {ROLE_GROUPS.map(group => {
+                                const users = filteredAssignableUsers.filter((user) => user.role === group.role)
+                                if (!users.length) return null
+
+                                return (
+                                    <optgroup key={group.role} label={group.label}>
+                                        {users.map((user) => (
+                                            <option key={user.id} value={user.id}>
+                                                {user.name} ({user.email}) - {user.department?.name || 'No department'} - {formatRole(user.role)}
+                                            </option>
+                                        ))}
+                                    </optgroup>
+                                )
+                            })}
                         </select>
                         <p style={{ fontSize: '11px', color: '#9CA3AF', marginTop: '4px' }}>
-                            When set, this KPI will only appear on that member&apos;s dashboard.
+                            Admin can assign KPI to managers, team leads, and team members. Managers can assign KPI to team leads and team members. Team leads can assign KPI only to team members.
                         </p>
                     </div>
                 )}

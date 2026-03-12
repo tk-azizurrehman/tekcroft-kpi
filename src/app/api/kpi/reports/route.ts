@@ -1,17 +1,54 @@
 import { NextRequest, NextResponse } from 'next/server'
+import type { Prisma } from '@prisma/client'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { calculateDailyScore } from '@/lib/kpi-calculator'
+import { type AccessUser, getAccessibleDepartmentIds, isDepartmentAccessible } from '@/lib/kpi-access'
+
+type ScoreEntry = {
+    countDone: number
+    dailyLimit: number
+}
+
+type LogWithCriteria = {
+    logDate: Date
+    countDone: number
+    kpiCriteriaId: string | null
+    kpiCriteria: {
+        dailyLimit: number
+    } | null
+}
+
+function buildDailyScores(logs: LogWithCriteria[]) {
+    const byDate = logs.reduce<Record<string, LogWithCriteria[]>>((acc, log) => {
+        const date = log.logDate.toISOString().split('T')[0]
+        if (!acc[date]) acc[date] = []
+        acc[date].push(log)
+        return acc
+    }, {})
+
+    return Object.entries(byDate).map(([date, dayLogs]) => {
+        const entries: ScoreEntry[] = dayLogs.map(log => ({
+            countDone: log.countDone,
+            dailyLimit: log.kpiCriteria?.dailyLimit || log.countDone,
+        }))
+
+        return { date, score: calculateDailyScore(entries) }
+    })
+}
 
 export async function GET(req: NextRequest) {
     const session = await auth()
     if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-    const { id: sessionUserId, role, departmentId } = session.user as any
+    const currentUser = session.user as AccessUser
+    const { id: sessionUserId, role } = currentUser
     const { searchParams } = new URL(req.url)
     const type = searchParams.get('type') || 'team' // 'team' | 'company' | 'personal' | 'member'
+    const filterDepartmentId = searchParams.get('departmentId')
     const startDate = searchParams.get('startDate')
     const endDate = searchParams.get('endDate')
+    const accessibleDepartments = getAccessibleDepartmentIds(currentUser)
 
     const dateFilter = startDate && endDate
         ? { gte: new Date(startDate), lte: new Date(endDate) }
@@ -24,21 +61,7 @@ export async function GET(req: NextRequest) {
             orderBy: { logDate: 'asc' },
         })
 
-        // Group by date
-        const byDate = logs.reduce((acc: any, log: any) => {
-            const d = log.logDate.toISOString().split('T')[0]
-            if (!acc[d]) acc[d] = []
-            acc[d].push(log)
-            return acc
-        }, {})
-
-        const dailyScores = Object.entries(byDate).map(([date, dayLogs]: any) => {
-            const entries = dayLogs.map((l: any) => ({
-                countDone: l.countDone,
-                dailyLimit: l.kpiCriteria?.dailyLimit || l.countDone,
-            }))
-            return { date, score: calculateDailyScore(entries) }
-        })
+        const dailyScores = buildDailyScores(logs)
 
         return NextResponse.json({ dailyScores, logs })
     }
@@ -62,18 +85,8 @@ export async function GET(req: NextRequest) {
             return NextResponse.json({ error: 'User not found' }, { status: 404 })
         }
 
-        // Basic access control: managers limited to their department; team leads to their team
-        if (role === 'manager' && departmentId && targetUser.departmentId !== departmentId) {
+        if (role !== 'admin' && !isDepartmentAccessible(currentUser, targetUser.departmentId)) {
             return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-        }
-
-        if (role === 'team_lead') {
-            const assignment = await prisma.teamAssignment.findFirst({
-                where: { leaderId: sessionUserId, memberId: targetUser.id },
-            })
-            if (!assignment) {
-                return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-            }
         }
 
         const logs = await prisma.kpiLog.findMany({
@@ -82,20 +95,7 @@ export async function GET(req: NextRequest) {
             orderBy: { logDate: 'asc' },
         })
 
-        const byDate = logs.reduce((acc: any, log: any) => {
-            const d = log.logDate.toISOString().split('T')[0]
-            if (!acc[d]) acc[d] = []
-            acc[d].push(log)
-            return acc
-        }, {})
-
-        const dailyScores = Object.entries(byDate).map(([date, dayLogs]: any) => {
-            const entries = dayLogs.map((l: any) => ({
-                countDone: l.countDone,
-                dailyLimit: l.kpiCriteria?.dailyLimit || l.countDone,
-            }))
-            return { date, score: calculateDailyScore(entries) }
-        })
+        const dailyScores = buildDailyScores(logs)
 
         return NextResponse.json({ user: targetUser, dailyScores, logs })
     }
@@ -105,40 +105,47 @@ export async function GET(req: NextRequest) {
             return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
         }
 
-        let userIds: string[] = []
-        if (role === 'team_lead') {
-            const assignments = await prisma.teamAssignment.findMany({
-                where: { leaderId: sessionUserId },
-                select: { memberId: true },
-            })
-            userIds = assignments.map((a: any) => a.memberId)
-        } else {
-            const users = await prisma.user.findMany({
-                where: { departmentId, isActive: true },
-                select: { id: true },
-            })
-            userIds = users.map((u: any) => u.id)
+        if (filterDepartmentId && !isDepartmentAccessible(currentUser, filterDepartmentId)) {
+            return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+        }
+
+        const memberWhere: Prisma.UserWhereInput = {
+            isActive: true,
+            role: { in: ['manager', 'team_lead', 'team_member'] },
+        }
+
+        if (accessibleDepartments !== null) {
+            const scopedDepartments = filterDepartmentId ? [filterDepartmentId] : accessibleDepartments
+            if (!scopedDepartments.length) return NextResponse.json({ members: [] })
+            memberWhere.departmentId = { in: scopedDepartments }
+        } else if (filterDepartmentId) {
+            memberWhere.departmentId = filterDepartmentId
         }
 
         const members = await prisma.user.findMany({
-            where: { id: { in: userIds }, isActive: true },
-            select: { id: true, name: true, email: true, role: true },
+            where: memberWhere,
+            select: { id: true, name: true, email: true, role: true, departmentId: true },
         })
 
         const memberData = await Promise.all(
-            members.map(async (member: any) => {
+            members.map(async (member) => {
                 const logs = await prisma.kpiLog.findMany({
                     where: { userId: member.id, ...(dateFilter ? { logDate: dateFilter } : {}) },
                     include: { kpiCriteria: true },
                 })
 
                 const criteria = await prisma.kpiCriteria.findMany({
-                    where: { departmentId: departmentId || undefined },
+                    where: {
+                        OR: [
+                            { departmentId: member.departmentId, assignedUserId: null },
+                            { assignedUserId: member.id },
+                        ],
+                    },
                 })
 
-                const entries = criteria.map((c: any) => {
-                    const log = logs.find((l: any) => l.kpiCriteriaId === c.id)
-                    return { countDone: log?.countDone || 0, dailyLimit: c.dailyLimit }
+                const entries: ScoreEntry[] = criteria.map((criterion) => {
+                    const log = logs.find(item => item.kpiCriteriaId === criterion.id)
+                    return { countDone: log?.countDone || 0, dailyLimit: criterion.dailyLimit }
                 })
 
                 const score = calculateDailyScore(entries)
@@ -155,7 +162,7 @@ export async function GET(req: NextRequest) {
         })
 
         const deptData = await Promise.all(
-            departments.map(async (dept: any) => {
+            departments.map(async (dept) => {
                 const users = await prisma.user.findMany({
                     where: { departmentId: dept.id, isActive: true },
                     select: { id: true },
@@ -163,15 +170,15 @@ export async function GET(req: NextRequest) {
 
                 const logs = await prisma.kpiLog.findMany({
                     where: {
-                        userId: { in: users.map((u: any) => u.id) },
+                        userId: { in: users.map(user => user.id) },
                         ...(dateFilter ? { logDate: dateFilter } : {}),
                     },
                     include: { kpiCriteria: true },
                 })
 
-                const entries = logs.map((l: any) => ({
-                    countDone: l.countDone,
-                    dailyLimit: l.kpiCriteria?.dailyLimit || l.countDone,
+                const entries: ScoreEntry[] = logs.map(log => ({
+                    countDone: log.countDone,
+                    dailyLimit: log.kpiCriteria?.dailyLimit || log.countDone,
                 }))
 
                 return {
@@ -192,7 +199,7 @@ export async function GET(req: NextRequest) {
         })
 
         const topUsers = await Promise.all(
-            topUserLogs.map(async (t: any) => {
+            topUserLogs.map(async (t) => {
                 const user = await prisma.user.findUnique({
                     where: { id: t.userId },
                     select: { name: true, email: true, department: { select: { name: true } } },
