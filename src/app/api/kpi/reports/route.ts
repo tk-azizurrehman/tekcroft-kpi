@@ -111,15 +111,28 @@ export async function GET(req: NextRequest) {
 
         const memberWhere: Prisma.UserWhereInput = {
             isActive: true,
-            role: { in: ['manager', 'team_lead', 'team_member'] },
         }
 
-        if (accessibleDepartments !== null) {
+        if (role === 'team_lead') {
+            if (!currentUser.departmentId) {
+                return NextResponse.json({ members: [] })
+            }
+
+            const scopedDepartmentId = filterDepartmentId || currentUser.departmentId
+            memberWhere.OR = [
+                { id: sessionUserId },
+                { departmentId: scopedDepartmentId, role: 'team_member' },
+            ]
+        } else if (accessibleDepartments !== null) {
             const scopedDepartments = filterDepartmentId ? [filterDepartmentId] : accessibleDepartments
             if (!scopedDepartments.length) return NextResponse.json({ members: [] })
             memberWhere.departmentId = { in: scopedDepartments }
-        } else if (filterDepartmentId) {
-            memberWhere.departmentId = filterDepartmentId
+            memberWhere.role = { in: ['manager', 'team_lead', 'team_member'] }
+        } else {
+            memberWhere.role = { in: ['manager', 'team_lead', 'team_member'] }
+            if (filterDepartmentId) {
+                memberWhere.departmentId = filterDepartmentId
+            }
         }
 
         const members = await prisma.user.findMany({

@@ -45,12 +45,12 @@ export async function GET(req: NextRequest) {
 
         if (filterRole) where.role = filterRole
     } else if (role === 'team_lead') {
-        // Team leads see their own team members in the default listing.
-        const assignments = await prisma.teamAssignment.findMany({
-            where: { leaderId: id },
-            select: { memberId: true },
-        })
-        where.id = { in: assignments.map((assignment) => assignment.memberId) }
+        if (!departmentId) {
+            return NextResponse.json({ users: [] })
+        }
+
+        where.departmentId = departmentId
+        where.role = 'team_member'
     } else {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
