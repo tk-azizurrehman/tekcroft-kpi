@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { Modal } from '@/components/ui/SharedComponents'
+import PasswordSettingsCard from '@/components/settings/PasswordSettingsCard'
 
 export default function AdminSettingsPage() {
     const [companyName, setCompanyName] = useState('')
@@ -13,17 +14,21 @@ export default function AdminSettingsPage() {
     const [showLogoHelp, setShowLogoHelp] = useState(false)
 
     useEffect(() => {
-        loadBranding()
-    }, [])
+        let cancelled = false
 
-    async function loadBranding() {
-        const res = await fetch('/api/settings/branding')
-        if (!res.ok) return
-        const json = await res.json()
-        setCompanyName(json.companyName || '')
-        setLogoUrl(json.logoUrl || null)
-        setPreviewUrl(json.logoUrl || null)
-    }
+        fetch('/api/settings/branding')
+            .then(res => (res.ok ? res.json() : null))
+            .then(json => {
+                if (!json || cancelled) return
+                setCompanyName(json.companyName || '')
+                setLogoUrl(json.logoUrl || null)
+                setPreviewUrl(json.logoUrl || null)
+            })
+
+        return () => {
+            cancelled = true
+        }
+    }, [])
 
     async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
         const file = e.target.files?.[0]
@@ -164,6 +169,10 @@ export default function AdminSettingsPage() {
                         </div>
                     </div>
                 </div>
+            </div>
+
+            <div style={{ marginTop: '24px' }}>
+                <PasswordSettingsCard />
             </div>
 
             <Modal
